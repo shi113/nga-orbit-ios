@@ -64,10 +64,15 @@ struct CommunityView: View {
                     UserDefaults.standard.set(reordered.map(\.id), forKey: "nga.community.section-order")
                 }
             }
-            .task(id: session.revision) {
+            .task(id: session.host) {
                 if sections.isEmpty,
-                   let cached = UserDefaults.standard.string(forKey: indexCacheKey) {
-                    applyIndex(cached)
+   let cached = UserDefaults.standard.string(forKey: indexCacheKey) {
+    let cachedSections = await Task.detached(priority: .utility) {
+        ForumIndex.parse(cached)
+    }.value
+    
+    applyIndex(cached, parsed: cachedSections)
+}
                 }
                 // Returning to this tab must not re-fetch and re-parse the whole index:
                 // the parse runs on the main actor and would compete with the pop
@@ -269,21 +274,28 @@ struct CommunityView: View {
             let cookie = await session.cookieHeader(for: host)
             let client = NGAClient(host: host)
             let raw = try await client.forumIndexRaw(cookie: cookie)
-            let result = ForumIndex.parse(raw)
-            guard !Task.isCancelled, token == requestID else { return }
-            if result.isEmpty { error = "版块目录已获取，但未能识别为分类。" }
-            else {
-                applyIndex(raw)
-                loadedRevision = session.revision
-                UserDefaults.standard.set(raw, forKey: indexCacheKey)
-            }
+            let result = await Task.detached(priority: .userInitiated) {
+    ForumIndex.parse(raw)
+}.value
+
+guard !Task.isCancelled, token == requestID else { return }
+
+if result.isEmpty {
+    error = "版块目录已获取，但未能识别为分类。"
+} else {
+    applyIndex(raw, parsed: result)
+    loadedRevision = session.revision
+    UserDefaults.standard.set(raw, forKey: indexCacheKey)
+}
         } catch {
             if !Task.isCancelled, token == requestID { self.error = session.network.describe(error) }
         }
     }
 
-    @MainActor private func applyIndex(_ raw: String) {
-        let result = ForumIndex.parse(raw)
+   @MainActor private func applyIndex(
+    _ raw: String,
+    parsed result: [BoardSection]
+) {
         guard !result.isEmpty else { return }
         rawIndex = raw
         let saved = UserDefaults.standard.stringArray(forKey: "nga.community.section-order") ?? []
