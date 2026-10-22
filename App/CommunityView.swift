@@ -65,14 +65,24 @@ struct CommunityView: View {
                 }
             }
             .task(id: session.host) {
-                if sections.isEmpty,
-   let cached = UserDefaults.standard.string(forKey: indexCacheKey) {
-    let cachedSections = await Task.detached(priority: .utility) {
-        ForumIndex.parse(cached)
-    }.value
-    
-    applyIndex(cached, parsed: cachedSections)
+    if sections.isEmpty,
+       let cached = UserDefaults.standard.string(forKey: indexCacheKey) {
+        let cachedSections = await Task.detached(priority: .utility) {
+            ForumIndex.parse(cached)
+        }.value
+
+        applyIndex(cached, parsed: cachedSections)
+    }
+
+    // 避免重复加载版块目录
+    guard sections.isEmpty || loadedRevision != session.revision else {
+        return
+    }
+
+    await load()
 }
+.animation(nil, value: sections)
+.animation(nil, value: selected)
                 }
                 // Returning to this tab must not re-fetch and re-parse the whole index:
                 // the parse runs on the main actor and would compete with the pop
